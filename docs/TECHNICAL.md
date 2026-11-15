@@ -9,7 +9,7 @@ Pylon 是跑在用户 Windows 电脑上的一个**本地白名单服务 + 异步
 
 设计上它是 Muse 的**专用工具**，不是多 agent 平台：权限控制在边界上（token 鉴权、白名单命令、文件夹锁、不经过 shell、超时与输出上限），在用户指定的文件夹内 Astro 有完全控制权。
 
-v2.3.3（本次）：按《独立代码审查报告（Open Code Review）》修完 1 个 P0 + 14 个 P1 + 15 项 P2/P3，逐条对应见 `docs/修复报告-OpenCodeReview-2026-11-15.md`。① **P0 NTFS `::$DATA` 绕过**：`normalize_rel_segments` 一处实现「切 `:stream` + 剥尾点/尾空格 + 转小写」，读保护 / 写保护 / 回收站 / 重命名 / 建目录全部复用；`resolve_inside` 直接拒绝含 `:`、NUL、以根开头的 path；解析后再用 `is_sensitive_target` 按真实文件名复检（判定层与 I/O 层对齐）。② **P1 HTTP 层**：读 20s / 写 30s 超时、请求行 8KB、单头 8KB、头总量 32KB、头条数 100、整请求 60s 总时限、并发连接 64（超 503）、`chunked` 明确 411、body 按需增长、支持 `Expect: 100-continue`。③ **认证**：token 改常量时间比较、按来源 IP 失败限流（10 次 / 60s → 锁 60s）、HMAC 签名 60s 窗口内去重（真防重放）、时间差 i128、不再回显服务端时间。④ **审批**：队列上限 16（满 429）、快照 `reverted` 幂等、快照总字节上限 32MB。⑤ **写入正确性**：`apply_patches` 逐字节记录换行风格、`apply_line_patches` 每行连换行符一起存（CRLF 不再被改成 LF、混合换行不再被拉平）；`handle_write` 拒绝非 UTF-8 目标（不再毁二进制）；`POST /api/program` 的读-校验-写进锁内做 CAS、409 不回显全文。⑥ **路径解析**：`resolve_via_existing_ancestor` 全失败改 `Err`（原 fail-open）；审批后 `revalidate_target` + 内容比对。⑦ **配置与前端**：`save_config` 原子写 + 保存互斥、配置查找不再 CWD 优先（`--config` / `PYLON_CONFIG` / exe 同级；仅 debug 看 CWD）、`csp` 由 `null` 改为白名单（内联脚本/样式外置为 `ui/app.js` / `ui/app.css` / `ui/boot-error-banner.js`）。测试数：`cargo test` 101/101（新增 14 项安全回归 + 3 项真连 socket 的 HTTP 端到端）。
+v2.3.3（本次）：按独立代码审查（Open Code Review）修完 1 个 P0 + 14 个 P1 + 15 项 P2/P3（报告原文已随开源清理删除，修复内容已全部落进代码与本文）。① **P0 NTFS `::$DATA` 绕过**：`normalize_rel_segments` 一处实现「切 `:stream` + 剥尾点/尾空格 + 转小写」，读保护 / 写保护 / 回收站 / 重命名 / 建目录全部复用；`resolve_inside` 直接拒绝含 `:`、NUL、以根开头的 path；解析后再用 `is_sensitive_target` 按真实文件名复检（判定层与 I/O 层对齐）。② **P1 HTTP 层**：读 20s / 写 30s 超时、请求行 8KB、单头 8KB、头总量 32KB、头条数 100、整请求 60s 总时限、并发连接 64（超 503）、`chunked` 明确 411、body 按需增长、支持 `Expect: 100-continue`。③ **认证**：token 改常量时间比较、按来源 IP 失败限流（10 次 / 60s → 锁 60s）、HMAC 签名 60s 窗口内去重（真防重放）、时间差 i128、不再回显服务端时间。④ **审批**：队列上限 16（满 429）、快照 `reverted` 幂等、快照总字节上限 32MB。⑤ **写入正确性**：`apply_patches` 逐字节记录换行风格、`apply_line_patches` 每行连换行符一起存（CRLF 不再被改成 LF、混合换行不再被拉平）；`handle_write` 拒绝非 UTF-8 目标（不再毁二进制）；`POST /api/program` 的读-校验-写进锁内做 CAS、409 不回显全文。⑥ **路径解析**：`resolve_via_existing_ancestor` 全失败改 `Err`（原 fail-open）；审批后 `revalidate_target` + 内容比对。⑦ **配置与前端**：`save_config` 原子写 + 保存互斥、配置查找不再 CWD 优先（`--config` / `PYLON_CONFIG` / exe 同级；仅 debug 看 CWD）、`csp` 由 `null` 改为白名单（内联脚本/样式外置为 `ui/app.js` / `ui/app.css` / `ui/boot-error-banner.js`）。测试数：`cargo test` 102/102（101 单元 + 1 图标；新增 14 项安全回归 + 3 项真连 socket 的 HTTP 端到端）。
 
 v2.3.2：界面 JS 初始化崩溃紧急修复。根因是 `ui/index.html` 第 1113 行残留 `$("source-close")` 的转义反斜杠，整个 `<script>` 解析失败（`SyntaxError: Invalid or unexpected token`），事件绑定与全部数据轮询一行都没跑——顶栏数据卡死在静态占位符、所有按钮点按无反应。修复：① 删掉 stray 反斜杠，`node --check` 双脚本全过；② 全部 18 处顶层直接绑定改走安全绑定 `on(id, ev, fn)`（元素不存在时静默跳过）；③ 窗口控制（—/□/×/⏻ 退出）移到脚本最顶部独立 `try/catch` 最先绑定；④ 拖拽区收窄：不再挂整个 `<header>`，只挂无按钮的 brand 与空白占位 `.drag-spacer`；⑤ 独立小脚本先于主脚本注册 `window.onerror` / `onunhandledrejection`，出错时顶部显示红色错误横幅，杜绝静默假死；⑥ `invoke` 未就绪时 1 秒内重试 10 次，就绪后重载再跑。Rust 侧核查结论：`ui_request`（`body: Option<serde_json::Value>`）与 `dispatch_request_internal` 链路无问题，单测已覆盖 `/ui/state` 等内部调用，无需改动。测试数：云端 Linux `cargo check` 零警告、`cargo test` 82/82（源码 85 项；真机 Windows `cargo check` 零警告、`cargo test` 84/84）。
 v2.3.1（本次）：顶栏单层融合 + 4 项底层盲区补全。① **顶栏单层一体化**：彻底砍掉 32px 独立假系统条（双图标/双标题套娃的根源），全页面顶部只剩唯一一行 60px Header；整行空白处挂 `data-tauri-drag-region`（拖拽窗口、双击最大化/还原）；左侧 38×38 Cyber-Cat + Pylon + v2.3.1 徽章 + `● 运行中 · 监听 0.0.0.0:8765` 状态胶囊；右侧同一水平线：三档权限分段切换器、[主题] [设置] 红底白字 [熔断]、竖线分隔、[ — ] [ □ ] [ × ]（销毁窗口缩回托盘，悬停提示“隐藏到托盘（释放内存）”）与暗红边框 [⏻ 退出]（彻底退出进程）；啰嗦的 [最小化到托盘] 按钮已删（与 × 重复）。② **关窗几何恢复**：销毁前把 `outer_position` / `inner_size` / `is_maximized` 存进进程级静态 `LAST_WINDOW_GEOMETRY`，托盘重建时恢复，不再每次重置回屏幕正中央。③ **第二实例唤醒**：重复双击 exe 时，第二实例触发命名 Event `Local\PylonShowWindowEvent` 再退出，主实例托盘线程监听到信号立即重建并置顶窗口。④ **切断 HTTP 偷调 /ui/\***：`dispatch_request_internal`（Tauri `invoke` 内部调用）是唯一能进 `/ui/*` 的通道，HTTP Socket（8765）收到 `/ui/*` 一律 403；新增单测 `ui_http_socket_blocked_but_internal_ok`（HTTP POST `/ui/save-config` 403、内部调用 200）。⑤ **后台任务日志弹窗**：任务表每行新增 [查看输出]，弹窗深色等宽终端框每 1 秒拉 `GET /api/tasks/status?id=&tail_bytes=16384` 实时刷 stdout/stderr 尾部。⑥ **文档**：§4 `GET /` 修正为小 JSON 状态、§14 修正为 v2.0.1 已实现的“回滚前自动拍保护快照，支持二次反悔”。测试数：云端 Linux `cargo check` 零警告、`cargo test` 82/82（源码 85 项；真机 Windows `cargo check` 零警告、`cargo test` 84/84）。
@@ -28,7 +28,7 @@ v2.1.1：修复 v2.1.0 真机问题——托盘最小化失效（`window.run()` 
 
 v2.1.0：GUI 从 eframe/egui 彻底迁至 **Slint**（纯 Rust 原生声明式 UI，`build.rs` 用 `slint_build::compile_with_config` 编译 `ui/main.slint`，样式 `fluent-light`；`backend-winit` + `renderer-femtovg` + `renderer-software`，无独显/老核显/RDP 下回退软渲染，不强制唤醒 RTX 独显；目标常驻内存 15–25MB，待真机实测）。界面仍是单页卡片式，`Timer` 每 300ms 从 `Arc<ServerState>` 同步；关闭窗口拦截为隐藏到托盘，托盘经 `invoke_from_event_loop` + Win32 ShowWindow/SetForegroundWindow 唤醒。另修复：重启后动态历史丢失（`restore_log_file` 改读主文件 + `.old`，启动日志带恢复条数）；补敏感文件读保护（`read`/`search`/`read_base64` 禁读 `bridge-config.json` 与 `pylon-activity.log`）。云端 `cargo check` 零警告、`cargo test` 66/66，真机待验。
 
-v2.0.1：界面重构 + 底层隐患摸底修复——恢复系统全量中文字体（废除 1210 字子集字体）、设置弹窗、动态列表重画（滚动条按需出现、底部留白、行对齐、超长截断+悬停）、热力图补月份/星期标签与图例、full_access 警示橙；5 处隐患：写保护大小写/尾部点号绕过、子进程 UTF-8 环境变量、回滚前自动拍保护快照、托盘唤醒存原生 HWND 强制拉起；listener_loop 已确认无问题（v0.9.1 已修，独立线程 + set_nonblocking(false)）。详见《代码摸底与修复报告》。
+v2.0.1：界面重构 + 底层隐患摸底修复——恢复系统全量中文字体（废除 1210 字子集字体）、设置弹窗、动态列表重画（滚动条按需出现、底部留白、行对齐、超长截断+悬停）、热力图补月份/星期标签与图例、full_access 警示橙；5 处隐患：写保护大小写/尾部点号绕过、子进程 UTF-8 环境变量、回滚前自动拍保护快照、托盘唤醒存原生 HWND 强制拉起；listener_loop 已确认无问题（v0.9.1 已修，独立线程 + set_nonblocking(false)）。（原报告已随开源清理删除，修复内容已全部落进代码与本文。）
 
 v0.8 的改动最大的一点：**GPUI 被彻底砍掉了**（它在 Linux 云端因 `xattr` 编不过，没法完整验证）。界面改成「系统托盘 + 内置单文件 Web 面板」，整包在 Linux 和 Windows 下都能 `cargo check` 零警告通过。
 
@@ -50,7 +50,7 @@ v1.0.2 是根治版：**废除每次重启随机变化的动态 `UI_SECRET`，`/
 云端的 Muse (Astro)
   │  Tailscale 私网（Muse 设备 → 用户电脑:8765）
   ▼
-Pylon (Windows, 0.0.0.0:8765, 模式 tailscale_or_local)
+Pylon (Windows, 0.0.0.0:8765, Tailscale 私网)
   ├─ HTTP 核心服务 (独立 std 线程, dispatch_request 统一分发)
   │    ├─ config.rs  配置解析、白名单、审批表、三档权限、防穿越
   │    ├─ bridge.rs  health / list / read / write / mkdir / run / patch / search
@@ -356,7 +356,7 @@ v1.0.1 修了日志并发追加的脏行：`append_log_file_to` 全程持一把�
 | 接口 | 说明 |
 | --- | --- |
 | `GET /` | 小 JSON 状态（`{ok, version, roots}`，与 `/health` 同形；网页面板已删，不再返回 HTML） |
-| `GET /ui/state` | 状态：版本、监听地址、网络模式、隧道状态、熔断开关、token、白名单 / 审批表、运行时间、`main_file`（v2.2.1 增，string 或 null） |
+| `GET /ui/state` | 状态：版本、监听地址、隧道状态、熔断开关、token、白名单 / 审批表、运行时间、`main_file`（v2.2.1 增，string 或 null） |
 | `GET /ui/approvals` | 当前挂起的审批列表（id / kind / detail / age_secs / diff_preview，v1.0.0 加 Diff 预览） |
 | `POST /ui/approve` — `{"id", "allow"}` | 允许 / 拒绝一项审批；id 已不在队列时 404 |
 | `POST /ui/run` — `{"root", "path", "argv"}` | 本机点按跑命令（审批表里的命令直接跑，点按本身就是确认） |
@@ -364,7 +364,7 @@ v1.0.1 修了日志并发追加的脏行：`append_log_file_to` 全程持一把�
 | `GET /ui/heatmap`（v1.0.3） | 操作热力图数据：读落盘日志（+轮转后的 `.old`）按天统计，返回 `{"ok": true, "days": {"2026-11-09": 12, ...}, "total": N}`；只认新格式行首的日期，旧格式行跳过 |
 | `GET /ui/snapshots`（v1.0.0） | 当前内存快照列表（id / root / rel / action / created_at / existed） |
 | `POST /ui/revert` — `{"id"}`（v1.0.0） | 回滚一张快照：原文件有字节 → 写回；新建文件 → 删掉；软删除的 → 从回收站移回；成功返回 `{"ok": true, "path": ...}` |
-| `POST /ui/save-config` | 保存 token / roots / 网络模式 / 权限模式 / HMAC 开关；**接受部分字段**（权限 Popover 只发 `{"permission_mode": ...}` 即可）；成功返回 `{"ok": true, "needs_restart": false, "applied": true}`（v0.9 热重载，保存后 0.5 秒内生效，不用重启） |
+| `POST /ui/save-config` | 保存 token / roots / 权限模式 / HMAC 开关；**接受部分字段**（权限 Popover 只发 `{"permission_mode": ...}` 即可）；成功返回 `{"ok": true, "needs_restart": false, "applied": true}`（v0.9 热重载，保存后 0.5 秒内生效，不用重启） |
 | `GET /ui/browse?path=<绝对路径>` | 列出某目录下的子目录（点选文件夹用）；path 为空时返回盘符（Windows） |
 | `POST /ui/kill-switch` — `{"paused"}` | 开关熔断 |
 
@@ -421,9 +421,9 @@ v1.0.1 修了日志并发追加的脏行：`append_log_file_to` 全程持一把�
 **v0.8 迁移注意**：v0.7 的 15 条白名单里本来有 `["git", "push"]` 和裸 `["python"]`，v0.8 把这两条从白名单挪到了审批表。否则白名单优先、审批永远触发不了。迁移后：
 
 - `git push` 与 `python 脚本.py`：远程调用时挂起，等用户在面板点「允许」（60 秒超时按拒绝）；本机面板点按直接跑（点按本身就是确认）；
-- `python --version`、`python -m pip --version`：仍在白名单里，直接放行（白名单优先于审批表）。
+- `python --version`、`python -m pip --version`：不在默认白名单里（默认白名单只有 6 条 cargo/rustc），走审批表 `["python"]` 前缀，需面板点允许。
 
-v0.9 起白名单、网络模式与权限级别**改完保存即热生效**（`NetworkManager` 重建网络组件、权限门控读实时配置），不用重启；token 与 roots 也是保存即换。改配置不用改代码，面板「快捷操作」会自动多出对应行。
+v0.9 起白名单与权限级别**改完保存即热生效**（权限门控读实时配置），不用重启；token 与 roots 也是保存即换。改配置不用改代码，面板「快捷操作」会自动多出对应行。
 
 ## 6. `/api/run`、参数消毒与 Job Object
 
