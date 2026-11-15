@@ -5,11 +5,11 @@
 <h1 align="center">Pylon</h1>
 
 <p align="center">
-  <strong>让远端 AI 安全地走进你的 Windows 文件夹</strong>
+  <strong>Let a remote AI work inside your Windows folders — safely.</strong>
 </p>
 
 <p align="center">
-  本地白名单文件服务 · 白名单命令执行 · 三档权限 · 人工审批 · 写前快照 · 一键回滚
+  Local allowlist file service · Allowlist command execution · Three permission levels · Human approval · Snapshots &amp; one-click rollback
 </p>
 
 <p align="center">
@@ -20,169 +20,173 @@
   <img src="https://img.shields.io/badge/tests-102%20passed-10B981" alt="tests" />
 </p>
 
+<p align="center">
+  <a href="README.zh-CN.md">中文版</a>
+</p>
+
 ---
 
-## ✨ 为什么是 Pylon
+## ✨ Why Pylon
 
-你想让云端的 AI 助手直接帮你改本地代码、跑编译测试，而不是来回复制粘贴。但把一台电脑的读写权限交给远端，唯一能接受的方式是**边界足够硬**：
+You want a cloud AI assistant to edit your local code and run builds and tests for you — no more copying and pasting back and forth. But handing a remote agent read/write access to your computer is only acceptable if the boundaries are hard enough:
 
-| 担忧 | Pylon 的回答 |
+| Worry | Pylon's answer |
 | --- | --- |
-| 它会不会动我别的文件夹？ | 不会。白名单之外一步都走不出去（`..`、绝对路径、盘符、UNC、软链接、NTFS 备用数据流全部拦截） |
-| 它会不会跑危险命令？ | 跑不了。直接调进程、不经过 shell；`cmd` / `powershell` / `bash` 三档权限下全部禁 |
-| 它会不会偷偷改配置？ | 改不了。`bridge-config.json` 永远不能远程改，读保护连列表里都不显示 |
-| 改错了怎么办？ | 一键回滚。每次写文件自动拍保护快照，面板点一下就还原，还能二次反悔 |
-| 我能不能随时叫停？ | 能。托盘右键「暂停云端写入」即熔断，顶栏三档权限随时切换、即时生效 |
+| Will it touch my other folders? | No. It cannot step outside the allowlisted folder (`..`, absolute paths, drive letters, UNC paths, symlinks, and NTFS alternate data streams are all blocked) |
+| Will it run dangerous commands? | It can't. Commands are spawned directly, never through a shell; `cmd` / `powershell` / `bash` are banned at all three permission levels |
+| Will it silently change my config? | No. `bridge-config.json` can never be modified remotely, and it doesn't even show up in directory listings |
+| What if it breaks something? | Roll it back. Every file write takes a protection snapshot first; one click in the panel restores it, and you can undo the rollback too |
+| Can I stop it at any time? | Yes. Right-click the tray icon and hit "pause cloud writes" to kill-switch it; switch permission levels from the top bar any time, effective immediately |
 
-## 🚀 快速开始
+## 🚀 Quick start
 
-### 环境要求
+### Requirements
 
-- Windows 11（64 位）
-- Rust MSVC 工具链（[rustup.rs](https://rustup.rs)，选 MSVC 版）+ Visual Studio Build Tools（含 C++ 工作负载与 Windows SDK）
-- [Tailscale](https://tailscale.com/)（两端 Connected，桥监听 `0.0.0.0:8765`）
+- Windows 11 (64-bit)
+- Rust MSVC toolchain ([rustup.rs](https://rustup.rs), MSVC edition) + Visual Studio Build Tools (with the C++ workload and Windows SDK)
+- [Tailscale](https://tailscale.com/) (both ends Connected; the bridge listens on `0.0.0.0:8765`)
 
-### 三步跑起来
+### Three steps
 
 ```cmd
-:: 1. 检查能不能编过
+:: 1. Check that it builds
 cargo check
 
-:: 2. 复制配置模板，填 token 和第一个文件夹
+:: 2. Copy the config template and fill in your token and first folder
 copy bridge-config.example.json bridge-config.json
 notepad bridge-config.json
 ```
 
 ```powershell
-# 生成一个 token（PowerShell，每次结果都不一样，用你自己的那串）
+# Generate a token (PowerShell — every run gives a different one, use your own)
 [guid]::NewGuid().ToString('N')
 ```
 
-双击 `start.bat`：它会检查 cargo、没有配置就从示例复制一份，然后 `cargo build --release`（第一次编译要等一阵子）。启动后打开 Pylon 窗口，任务栏角落多一个托盘图标，右键托盘可以打开面板、暂停云端写入、退出 Pylon。
+Double-click `start.bat`: it checks for cargo, copies the example config if there isn't one, then runs `cargo build --release` (the first build takes a while). Once started, the Pylon window opens and a tray icon appears in the taskbar corner; right-click the tray icon to open the panel, pause cloud writes, or quit Pylon.
 
-也可以在设置弹窗里填配置：点右上角 `[设置]`，Token 行点「重新生成」，工作区行点「浏览…」选文件夹，点「保存并热重载」，0.5 秒内生效，不用重启。
+You can also fill in the config from the settings dialog: click `[Settings]` in the top right, hit "Regenerate" on the Token row, "Browse…" on the workspace row to pick a folder, then "Save & hot reload" — it takes effect within 0.5 seconds, no restart needed.
 
-确认跑起来了：
+Check that it's running:
 
 ```powershell
-$h = @{ "X-Bridge-Token" = "你的token" }
+$h = @{ "X-Bridge-Token" = "your-token" }
 Invoke-RestMethod -Uri "http://127.0.0.1:8765/health" -Headers $h
 ```
 
-## 🏗️ 架构
+## 🏗️ Architecture
 
 ```mermaid
 flowchart TB
-    subgraph Local["Windows 本机"]
-        Tray["系统托盘<br/>右键：打开面板 / 暂停写入 / 退出"]
-        UI["Tauri 2 单页界面<br/>ui/index.html + app.js/app.css"]
-        Core["Rust 核心服务<br/>std 线程 · dispatch_request 统一分发"]
+    subgraph Local["Windows machine"]
+        Tray["System tray<br/>Right-click: open panel / pause writes / quit"]
+        UI["Tauri 2 single-page UI<br/>ui/index.html + app.js/app.css"]
+        Core["Rust core service<br/>std threads · dispatch_request"]
         Tray --> Core
         UI -->|invoke ui_request| Core
     end
-    subgraph Net["Tailscale 私网"]
-        Remote["远端调用方<br/>AI 助手 / 脚本"]
+    subgraph Net["Tailscale private network"]
+        Remote["Remote caller<br/>AI assistant / scripts"]
     end
     Remote -->|HTTPS · X-Bridge-Token| Core
-    Core -->|只读写白名单文件夹| FS["work 文件夹"]
+    Core -->|only touches the allowlisted folder| FS["work folder"]
 ```
 
 ```text
 src/
-├── config.rs    读 bridge-config.json：白名单、审批表、防穿越
-├── bridge.rs    std TcpListener 做 HTTP：health / list / read / write / run / patch / search / tasks
-├── tasks.rs     异步长任务引擎（Job Object + 双管道读线程，offset 增量轮询）
-├── network.rs   HTTP 监听热切换
-├── job.rs       Windows Job Object 进程树清理
-├── tray.rs      Windows 专属：系统托盘（原生 Win32 消息循环）
-├── tauri_ui.rs  Tauri 2 全宽单页窗口（invoke ui_request 同路分发，仅本机）
-└── main.rs      入口：读配置 → 起服务 → 打开窗口 → 托盘驻留（Linux 下只跑服务）
+├── config.rs    Reads bridge-config.json: allowlist, approval list, path-traversal defense
+├── bridge.rs    std TcpListener HTTP service: health / list / read / write / run / patch / search / tasks
+├── tasks.rs     Async long-task engine (Job Object + dual-pipe reader threads, offset-based polling)
+├── network.rs   HTTP listener hot-switching
+├── job.rs       Windows Job Object process-tree cleanup
+├── tray.rs      Windows-only: system tray (native Win32 message loop)
+├── tauri_ui.rs  Tauri 2 full-width single-page window (invoke ui_request, local only)
+└── main.rs      Entry: read config → start service → open window → stay in tray (Linux runs the service only)
 ```
 
-Linux 下只编译核心服务层（bridge / config / network / tasks / job），GUI 全部 `#[cfg(windows)]` 隔开，`cargo check` / `cargo test` 零系统库依赖。
+On Linux only the core service layer compiles (bridge / config / network / tasks / job). The GUI is fully behind `#[cfg(windows)]`, so `cargo check` / `cargo test` need no system libraries there.
 
-## ⚙️ 配置
+## ⚙️ Configuration
 
-`bridge-config.json` 关键字段（完整模板见 [`bridge-config.example.json`](bridge-config.example.json)）：
+Key fields of `bridge-config.json` (full template: [`bridge-config.example.json`](bridge-config.example.json)):
 
-| 字段 | 说明 |
+| Field | Description |
 | --- | --- |
-| `token` | 桥的密码，32 位随机串；只有知道它的人才能调用接口。怀疑泄露就去设置弹窗重新生成一个 |
-| `roots` | 白名单根目录，如 `{"work": "C:\\path\\to\\your\\workspace"}`；先拿一个空文件夹试，别直接拿整个“文档”或桌面 |
-| `run_allowlist` | `/api/run` 的白名单，argv 必须以其中一条逐 token 精确开头 |
-| `run_asklist` | 需人工审批的表，默认 `[["git", "push"], ["python"]]` |
-| `permission_mode` | 三档权限：`ask_always`（请求批准）/ `smart_auto`（帮我批准，默认）/ `full_access`（完全访问） |
-| `main_file` | 可选，绑定的主程序单文件（相对 work 根目录或绝对路径） |
-| `require_hmac` | 为 `true` 时改认 `X-Bridge-Timestamp` + `X-Bridge-Signature`（HMAC-SHA256 防重放） |
-| `host` / `port` | 默认 `0.0.0.0:8765`，一般不用改 |
+| `token` | The bridge password, a 32-char random string; only whoever knows it can call the API. If you suspect a leak, regenerate it from the settings dialog |
+| `roots` | Allowlisted root folders, e.g. `{"work": "C:\\path\\to\\your\\workspace"}`; start with an empty test folder, not your whole Documents or Desktop |
+| `run_allowlist` | The `/api/run` allowlist; argv must start with one of these entries, token by token |
+| `run_asklist` | Commands that need human approval, default `[["git", "push"], ["python"]]` |
+| `permission_mode` | Three levels: `ask_always` (approve everything) / `smart_auto` (approve for me, default) / `full_access` (full access) |
+| `main_file` | Optional, the bound main program file (relative to the work root, or absolute) |
+| `require_hmac` | When `true`, requests use `X-Bridge-Timestamp` + `X-Bridge-Signature` (HMAC-SHA256 anti-replay) instead of the token |
+| `host` / `port` | Default `0.0.0.0:8765`, usually no need to change |
 
 ## 📡 HTTP API
 
-所有接口（除 `GET /` 与 `/health` 外）都要带 `X-Bridge-Token` 请求头。`root` 是 `roots` 里的别名（如 `work`），`path` 是相对路径，永远锁在白名单根目录内。
+Every endpoint except `GET /` and `/health` requires the `X-Bridge-Token` header. `root` is an alias from `roots` (e.g. `work`); `path` is relative and always locked inside the allowlisted root.
 
-| 接口 | 说明 |
+| Endpoint | Description |
 | --- | --- |
-| `GET /health` | 健康检查：`{"ok": true, "version": "2.3.3", "roots": ["work"]}` |
-| `GET /` | 小 JSON 状态（仅本机） |
-| `GET /api/list?root=&path=` | 列目录 |
-| `GET /api/read?root=&path=` | 读文本文件（单文件 2MB 上限） |
-| `POST /api/write` | 写文本文件（写前自动拍快照） |
-| `POST /api/mkdir` | 建目录 |
-| `POST /api/rename` | 改名 / 移动（目标需审批） |
-| `POST /api/trash` | 软删除进 `.pylon_trash/`（可回滚） |
-| `GET /api/read_base64?root=&path=` | 读二进制（上限 10MB） |
-| `POST /api/write_base64` | 写二进制（上限 10MB） |
-| `GET /api/search?root=&path=&query=` | 代码检索（支持 `is_regex`、`case_sensitive`，最多 100 条） |
-| `POST /api/patch` | 行级修补（`search` 必须恰好出现 1 次；CRLF / LF 无感匹配，写回保留原换行符） |
-| `POST /api/run` | 白名单命令执行（见下） |
-| `GET /api/program` | 读绑定的主程序单文件（附 `sha256` / `line_count` / `last_run`） |
-| `POST /api/program` | 覆写或行级修补主程序；支持 `expected_sha256` 乐观锁（不匹配 409）与 `run_argv` 改后即跑 |
-| `GET /api/changes?since_ms=` | 增量变更感知（列出最近改动的文件） |
-| `POST /api/tasks/start` | 启动异步长任务（并发上限 8，超限 429） |
-| `GET /api/tasks/status?id=&tail_bytes=` | 任务状态 + stdout/stderr 尾部（UTF-8 边界对齐） |
-| `GET /api/tasks/list` | 列出任务 |
-| `POST /api/tasks/stop` | 停止任务（关 Job 句柄，OS 清进程树） |
+| `GET /health` | Health check: `{"ok": true, "version": "2.3.3", "roots": ["work"]}` |
+| `GET /` | Small JSON status (local only) |
+| `GET /api/list?root=&path=` | List a directory |
+| `GET /api/read?root=&path=` | Read a text file (2 MB limit per file) |
+| `POST /api/write` | Write a text file (takes a protection snapshot first) |
+| `POST /api/mkdir` | Create a directory |
+| `POST /api/rename` | Rename / move (destination needs approval) |
+| `POST /api/trash` | Soft-delete into `.pylon_trash/` (reversible) |
+| `GET /api/read_base64?root=&path=` | Read a binary file (10 MB limit) |
+| `POST /api/write_base64` | Write a binary file (10 MB limit) |
+| `GET /api/search?root=&path=&query=` | Code search (`is_regex`, `case_sensitive`, max 100 results) |
+| `POST /api/patch` | Line-level patching (`search` must occur exactly once; CRLF/LF-insensitive matching, original line endings preserved on write) |
+| `POST /api/run` | Allowlist command execution (see below) |
+| `GET /api/program` | Read the bound main program file (with `sha256` / `line_count` / `last_run`) |
+| `POST /api/program` | Overwrite or patch the main program; supports `expected_sha256` optimistic locking (409 on mismatch) and `run_argv` to run right after editing |
+| `GET /api/changes?since_ms=` | Incremental change feed (recently modified files) |
+| `POST /api/tasks/start` | Start an async long task (max 8 concurrent, 429 beyond that) |
+| `GET /api/tasks/status?id=&tail_bytes=` | Task status + stdout/stderr tail (UTF-8 boundary aligned) |
+| `GET /api/tasks/list` | List tasks |
+| `POST /api/tasks/stop` | Stop a task (closes the Job handle, OS cleans up the process tree) |
 
-`/ui/*`（`/ui/state`、`/ui/heatmap`、`/ui/activity`、`/ui/approvals`、`/ui/tasks`、`/ui/save-config` 等）只供本机 Tauri 界面经 `invoke('ui_request')` 内部调用，HTTP Socket 收到一律 403。
+`/ui/*` (`/ui/state`, `/ui/heatmap`, `/ui/activity`, `/ui/approvals`, `/ui/tasks`, `/ui/save-config`, etc.) is only for the local Tauri UI via `invoke('ui_request')`; the HTTP socket answers 403 to all of them.
 
-### `/api/run` 白名单命令执行
+### `/api/run` allowlist command execution
 
 ```bash
 curl -X POST "http://127.0.0.1:8765/api/run" \
-  -H "X-Bridge-Token: 你的token" -H "Content-Type: application/json" \
+  -H "X-Bridge-Token: your-token" -H "Content-Type: application/json" \
   -d '{"root":"work","path":"proj","argv":["cargo","test"],"timeout_secs":300}'
 ```
 
-- `argv` 是字符串数组，如 `["cargo", "test"]`；`path` 是命令的工作目录（相对路径，默认 `"."`）；`timeout_secs` 可选，默认 300 秒，上限 1800 秒。
-- 命令本身退出码非 0 时仍返回 200，看 `exit_code` 判断；`stdout` / `stderr` 各最多 512KB（超了截断并标记 `truncated`）。
-- 默认白名单：`cargo run / test / check / build`、`cargo --version`、`rustc --version`；`git push` 与 `python` 走审批表，远程调用时要在面板点「批准」才执行（60 秒超时按拒绝）。
-- 别用它跑常驻服务：跑完就退出的命令（编译、测试）才合适。
+- `argv` is a string array, e.g. `["cargo", "test"]`; `path` is the command's working directory (relative, default `"."`); `timeout_secs` is optional, default 300 s, max 1800 s.
+- A non-zero exit code still returns HTTP 200 — check `exit_code`; `stdout` / `stderr` are capped at 512 KB each (truncated and flagged with `truncated`).
+- Default allowlist: `cargo run / test / check / build`, `cargo --version`, `rustc --version`; `git push` and `python` go through the approval list — remote calls wait for you to click "Approve" in the panel (60 s timeout counts as a denial).
+- Don't use it for long-running services; it's meant for commands that finish and exit (builds, tests).
 
-## 🔒 安全模型
+## 🔒 Security model
 
-- **边界控制，不做沙盒**：白名单防的是“跑别的工具”，不是把 cargo 本身沙盒化——`cargo run / test / check / build` 都会执行白名单文件夹里的代码（build.rs、被跑的程序本身）。桥本来就能往 `work` 里写任意文件，`/api/run` 新开的口子是**让他能直接执行**，而不是只能写。token 仍是唯一门槛，别外泄。
-- **不经过 shell**：直接调进程，`&&` / `|` / `>` 只会变成传给命令的字面参数，不会执行。
-- **参数消毒**：`python -c` / `python -m`（除 `python -m pip --version` 外）、`git diff --output=...`、`git -c ...` 一律 403；`python` 只能跑白名单内已存在的 `.py` 脚本。
-- **路径归一化**：NTFS 语义统一处理（切 `:stream`、剥尾部 `.` / 空格、转小写），读保护、写保护、回收站、重命名、建目录共用同一份判定口径；`resolve_inside` 在入口直接拒绝 `:`、NUL、以根开头的路径。
-- **三条红线，三档权限都一样**：`cmd` / `powershell` / `pwsh` / `bash` / `sh` 永远禁；命令的工作目录永远锁在 `work` 文件夹内；`bridge-config.json` 永远不能远程改。
-- **写保护**：`read` / `search` / `read_base64` 禁读 `bridge-config.json` 与 `pylon-activity.log`（含大小写 / 尾部点号变体）；敏感文件在目录列表里也不显示。
-- **Job Object（Windows）**：每个命令进专属 Job，超时 / 退出时进程树一并被系统清理。
-- **可选 HMAC**：`require_hmac: true` 时改认时间戳 + HMAC-SHA256 签名，防重放。
+- **Boundary control, not a sandbox**: the allowlist stops "running other tools", it doesn't sandbox cargo itself — `cargo run / test / check / build` will execute code inside the allowlisted folder (build.rs, the program being run). The bridge can already write arbitrary files into `work`; `/api/run` adds the ability to **execute** them, not just write them. The token is still the only gate — don't leak it.
+- **No shell involved**: processes are spawned directly, so `&&` / `|` / `>` become literal arguments, never executed.
+- **Argument sanitization**: `python -c` / `python -m` (except `python -m pip --version`), `git diff --output=...`, and `git -c ...` are all 403; `python` may only run `.py` scripts that already exist inside the allowlist.
+- **Path normalization**: one NTFS-aware normalization routine (strip `:stream`, trim trailing `.` / spaces, lowercase) shared by read protection, write protection, trash, rename, and mkdir; `resolve_inside` rejects `:`, NUL, and root-anchored paths at the entry point.
+- **Three red lines, same at every permission level**: `cmd` / `powershell` / `pwsh` / `bash` / `sh` are always banned; the command working directory is always locked inside the `work` folder; `bridge-config.json` can never be modified remotely.
+- **Read protection**: `read` / `search` / `read_base64` refuse `bridge-config.json` and `pylon-activity.log` (including case / trailing-dot variants); sensitive files don't even appear in directory listings.
+- **Job Object (Windows)**: every command runs in its own Job; on timeout or exit the OS cleans up the whole process tree.
+- **Optional HMAC**: with `require_hmac: true`, requests use a timestamp + HMAC-SHA256 signature instead of the token, for replay protection.
 
-## 🛠️ 开发
+## 🛠️ Development
 
 ```cmd
-cargo check          :: 最常用，编过即没错
-cargo test           :: 单元测试全绿（Windows 102 项，含 Windows 专属 Job 测试；Linux 100 项）
+cargo check          :: most used — if it compiles, it's fine
+cargo test           :: all green (Windows: 102 tests incl. Windows-only Job tests; Linux: 100)
 cargo build --release
 ```
 
-Linux 下只编译核心服务层，GUI 全部 `#[cfg(windows)]` 隔开，不需要任何系统库。Windows 专属代码的裁决以真机 `cargo check` 为准，云端 Linux 编不过 Windows 专属代码。
+On Linux only the core service layer compiles, fully behind `#[cfg(windows)]` for the GUI — no system libraries needed. Windows-specific code is judged by a real `cargo check` on Windows; cloud Linux can't compile Windows-only code.
 
-版本号四处同步：`Cargo.toml`、`src/bridge.rs` 的 `VERSION` 常量、`tauri.conf.json`、`README.md` 标题。
+Keep the version in sync in four places: `Cargo.toml`, the `VERSION` constant in `src/bridge.rs`, `tauri.conf.json`, and the README title.
 
-更详细的内部设计见 [`docs/TECHNICAL.md`](docs/TECHNICAL.md)，使用指引见 [`docs/Pylon使用指引.md`](docs/Pylon使用指引.md)。
+For the internal design, see [`docs/TECHNICAL.md`](docs/TECHNICAL.md); for the user guide, see [`docs/Pylon使用指引.md`](docs/Pylon使用指引.md).
 
-## 📄 许可证
+## 📄 License
 
 [MIT](LICENSE)
