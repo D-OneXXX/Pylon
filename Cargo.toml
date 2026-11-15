@@ -1,0 +1,77 @@
+[package]
+name = "muse-local-bridge"
+version = "2.3.3"
+edition = "2021"
+description = "Pylon — Rust 原生版：本地白名单文件服务 + 异步任务引擎 + 系统托盘 + Tauri 2 内嵌 Shadcn 单文件界面（关窗即销毁）"
+license = "MIT"
+
+# Windows 上构建需要 MSVC 工具链 + Windows SDK + WebView2（Win11 自带）。
+# Linux 上直接 cargo check / cargo test，不需要任何系统库：
+# GUI（tauri / rfd / arboard / tray / job）全部 #[cfg(windows)] 或
+# windows-only 依赖隔开，Linux 只编译核心服务层（bridge/config/network/tasks）。
+#
+# 依赖说明：
+# - HTTP 服务不用 axum / tokio，只用 std + serde_json，保持核心轻、编译快。
+# - uuid v4 用系统随机数出 32 位 token 与 task id。
+#   （v2.3.3 更正：动态「本地 UI 密钥」早在 v1.0.2 就废除了，/ui/* 只认
+#    Tauri 内部调用通道，不再需要单独的 UI 密钥。）
+# - chrono 只开 clock，打动态日志的时间戳。
+# - regex：/api/search 的正则模式（纯 Rust，跨平台）。
+# - hmac + sha2：可选防重放签名 X-Bridge-Signature；sha2 另供
+#   Program Capsule 的 expected_sha256 乐观锁（纯 Rust，跨平台）。
+# - windows-sys（仅 Windows）：系统托盘（Win32_UI_Shell / WindowsAndMessaging）、
+#   Job Object 进程树清理（Win32_System_JobObjects）、提示音（Diagnostics_Debug）。
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+# v0.7：动态记录要打本地时间（HH:MM:SS），只开 clock，不引 serde 等多余功能。
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# v0.8：/api/search 的正则模式。
+regex = "1"
+# v0.8：可选防重放签名 HMAC-SHA256。
+hmac = "0.12"
+sha2 = "0.10"
+# v2.1.3：base64 编解码（/api/read_base64 / /api/write_base64 用）。
+base64 = "0.23"
+
+# v2.2.0：GUI 与系统集成全部 Windows-only——Linux 云端零系统库依赖，
+# cargo check / cargo test 只编译核心服务层。
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+    "Win32_System_ProcessStatus", # EmptyWorkingSet 工作集回落用（tauri_ui.rs）
+    "Win32_System_LibraryLoader",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_Graphics_Gdi",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+# v2.2.0：Tauri 2 + 内嵌单文件 Shadcn UI（替代 Slint）。
+# 窗口关即 destroy（释放 WebView2），待机 ~5MB；托盘双击 / 新审批动态重建。
+tauri = { version = "2", features = [] }
+# 设置弹窗的 [浏览…] 原生目录 / 文件选择器（独立线程打开，不阻塞事件循环）。
+rfd = "0.18"
+# 设置弹窗 [复制] Token——纯 Rust，Windows 上走 Win32 剪贴板 API。
+arboard = "3"
+
+# v2.2.0：Windows 下编译 tauri.conf.json 上下文 + 嵌 icons/icon.ico
+# （tauri-build 自带 Windows 资源编译，取代 v2.1 的 winres 管线）。
+# Linux 不经过这里（build.rs 的 #[cfg(windows)] 分支）。
+[target.'cfg(windows)'.build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[profile.release]
+opt-level = 2
+
+# v0.4：声明自己就是独立包，不往上找 workspace。
+# 之前在工作区根目录里出过问题：上一级有个孤零零的 Cargo.toml，
+# Cargo 往上找 workspace 时先撞上它就报错。有了这一节就不会再往上找。
+[workspace]
+
+[dev-dependencies]
+# （无 dev 依赖；核心服务层单测只用 std + 现有依赖。）

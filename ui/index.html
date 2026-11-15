@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pylon</title>
+<!-- v2.3.3：样式与脚本外置（ui/app.css / ui/app.js / ui/boot-error-banner.js），
+     这样 tauri.conf.json 才能启用严格 CSP（script-src 'self'），
+     内联脚本 / 内联事件处理器一律不允许。 -->
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<!-- v2.3.2：前端全局异常横幅（独立小脚本，先于主脚本注册）——主脚本哪怕语法报错，
+     这里也能把具体报错显示出来，杜绝静默假死。 -->
+<div id="js-error-banner" style="display:none;position:sticky;top:0;z-index:100;background:#dc2626;color:#fff;font:13px/1.5 system-ui,sans-serif;padding:10px 14px;word-break:break-word;">
+  <b>前端脚本出错：</b><span id="js-error-text"></span>
+  <button type="button" id="js-error-close" style="float:right;background:transparent;border:1px solid #fff;color:#fff;border-radius:6px;padding:2px 10px;cursor:pointer;">关闭</button>
+</div>
+<script src="boot-error-banner.js"></script>
+<!-- ================= v2.3.1 单层一体化顶栏（唯一一行 60px Header） ================= -->
+<!-- v2.3.2：拖拽区只挂 brand（无按钮）与空白占位 spacer，不再挂整个 header——
+     按钮点击再也不会被拖拽区拦截；所有按钮仍显式 data-tauri-drag-region="false"。 -->
+<header class="topbar">
+  <div class="brand" data-tauri-drag-region>
+    <span id="brand-logo" class="brand-logo" role="img" aria-label="Pylon"></span>
+    <span class="name">Pylon</span>
+    <span class="ver" id="version-badge">v2.3.2</span>
+    <span class="status-pill"><span class="dot ok" id="status-dot"></span><span id="status-text">运行中</span><span class="sep"></span><span class="addr" id="listen-addr">监听 —</span></span>
+  </div>
+  <div class="drag-spacer" data-tauri-drag-region></div>
+  <div class="top-actions">
+    <div class="seg" id="perm-seg" role="group" aria-label="权限模式" data-tauri-drag-region="false">
+      <button type="button" class="seg-btn" data-mode="ask_always" data-tauri-drag-region="false">每次都问</button>
+      <button type="button" class="seg-btn" data-mode="smart_auto" data-tauri-drag-region="false">帮我批准</button>
+      <button type="button" class="seg-btn" data-mode="full_access" data-tauri-drag-region="false">完全访问</button>
+    </div>
+    <button type="button" class="btn sm" id="theme-btn" title="切换暗 / 亮主题" data-tauri-drag-region="false">主题</button>
+    <button type="button" class="btn sm" id="settings-btn" data-tauri-drag-region="false">设置</button>
+    <button type="button" class="btn sm btn-kill" id="kill-btn" title="紧急熔断：暂停云端写入" data-tauri-drag-region="false">熔断</button>
+    <span class="vdiv" aria-hidden="true"></span>
+    <button type="button" class="win-btn" id="win-min" title="最小化到任务栏" aria-label="最小化" data-tauri-drag-region="false">—</button>
+    <button type="button" class="win-btn" id="win-max" title="最大化 / 还原" aria-label="最大化或还原" data-tauri-drag-region="false">□</button>
+    <button type="button" class="win-btn close" id="win-close" title="隐藏到托盘（释放内存）" aria-label="隐藏到托盘" data-tauri-drag-region="false">×</button>
+    <button type="button" class="btn sm danger-outline" id="exit-btn" title="彻底退出 Pylon 进程" data-tauri-drag-region="false">⏻ 退出</button>
+  </div>
+</header>
+<div class="wrap">
+
+  <!-- ================= 审批横幅（仅挂起时滑入） ================= -->
+  <div id="approval-banner">
+    <div class="top">
+      <span class="kind" id="approval-kind">run</span>
+      <span class="detail" id="approval-detail"></span>
+      <span class="countdown" id="approval-countdown">60s</span>
+    </div>
+    <pre id="approval-diff" style="display:none"></pre>
+    <div class="actions">
+      <button type="button" class="btn primary sm" id="approve-btn">允许</button>
+      <button type="button" class="btn danger sm" id="deny-btn">拒绝</button>
+      <span class="queue" id="approval-queue"></span>
+    </div>
+  </div>
+
+  <!-- ================= KPI 四宫格 ================= -->
+  <section class="kpi-grid">
+    <div class="card kpi">
+      <div class="label">今日操作</div>
+      <div class="value" id="kpi-today">0</div>
+      <div class="sub" id="kpi-today-date"></div>
+    </div>
+    <div class="card kpi">
+      <div class="label">累计操作</div>
+      <div class="value" id="kpi-total">0</div>
+      <div class="sub">近 53 周热力图统计</div>
+    </div>
+    <div class="card kpi">
+      <div class="label">运行时长</div>
+      <div class="value" id="kpi-uptime">—</div>
+      <div class="sub">本次启动以来</div>
+    </div>
+    <div class="card kpi">
+      <div class="label">权限状态</div>
+      <div class="value perm" id="kpi-perm">—</div>
+      <div class="sub" id="kpi-perm-sub">三档门控 · 实时生效</div>
+    </div>
+  </section>
+
+  <!-- ================= 热力图（整行全宽） ================= -->
+  <section class="card section" id="heatmap-card">
+    <div class="card-head">
+      <h3>操作热力图</h3>
+      <span class="grow"></span>
+      <span class="pill" id="heatmap-range">近 53 周</span>
+    </div>
+    <div id="heatmap-wrap">
+      <div id="heatmap-months"></div>
+      <div id="heatmap"></div>
+      <div class="heat-legend">少 <i style="background:var(--heat-0)"></i><i style="background:#9BE9A8"></i><i style="background:#40C463"></i><i style="background:#30A14E"></i><i style="background:#216E39"></i> 多</div>
+    </div>
+  </section>
+
+  <!-- ================= 程序胶囊 ================= -->
+  <section class="card section" id="program-card">
+    <div class="card-head">
+      <h3>程序胶囊 · 一个文件就是程序</h3>
+      <span class="grow"></span>
+      <span class="pill" id="program-state">未绑定</span>
+    </div>
+    <div id="program-body"><div class="empty">正在读取主程序状态…</div></div>
+  </section>
+
+  <!-- ================= 后台任务 ================= -->
+  <section class="card section" id="tasks-card">
+    <div class="card-head">
+      <h3>后台任务</h3>
+      <span class="pill" id="tasks-count">0</span>
+      <span class="grow"></span>
+      <span class="addr" style="max-width:none">并发上限由后端控制</span>
+    </div>
+    <table id="tasks-table">
+      <thead>
+        <tr>
+          <th class="col-task">任务</th>
+          <th class="col-argv">命令</th>
+          <th class="col-pid">PID</th>
+          <th class="col-state">状态</th>
+          <th class="col-ela">耗时</th>
+          <th class="col-act"></th>
+        </tr>
+      </thead>
+      <tbody id="tasks-body"><tr><td colspan="6" class="empty">暂无后台任务</td></tr></tbody>
+    </table>
+  </section>
+
+  <!-- ================= 操作动态 ================= -->
+  <section class="card section" id="activity-card">
+    <div class="card-head">
+      <h3>操作动态</h3>
+      <span class="grow"></span>
+      <span class="pill">最新在前 · 单行防溢出</span>
+    </div>
+    <div id="activity-list"><div class="empty">暂无动态</div></div>
+  </section>
+
+</div>
+
+<!-- ================= 设置弹窗 ================= -->
+<div class="overlay" id="settings-overlay">
+  <div class="dialog" id="settings-dialog">
+    <h2>设置</h2>
+    <div class="desc">保存后 0.5 秒内热生效，无需重启。</div>
+    <div class="field">
+      <label>Bridge Token</label>
+      <div class="row">
+        <input type="password" id="cfg-token" autocomplete="off">
+        <button type="button" class="btn sm" id="token-eye" title="显示 / 隐藏">显示</button>
+        <button type="button" class="btn sm" id="token-copy">复制</button>
+        <button type="button" class="btn sm" id="token-regen">重新生成</button>
+      </div>
+      <div class="hint">云端 Muse 经 Tailscale 连接时用的密钥。</div>
+    </div>
+    <div class="field">
+      <label>工作区（work 根目录）</label>
+      <div class="row">
+        <input type="text" id="cfg-work" placeholder="C:\Users\...\bridge-test">
+        <button type="button" class="btn sm" id="work-browse">浏览…</button>
+      </div>
+      <div class="hint">必须是已存在的绝对路径；所有文件操作锁在这个根目录内。</div>
+    </div>
+    <div class="field">
+      <label>主程序单文件（main_file）</label>
+      <div class="row">
+        <input type="text" id="cfg-mainfile" placeholder="app.html（相对 work 根，或绝对路径）">
+        <button type="button" class="btn sm" id="mainfile-browse">浏览…</button>
+      </div>
+      <div class="hint">「一个文件就是程序」：远端 GET/POST /api/program 直接读写它。留空 = 不绑定。</div>
+    </div>
+    <div class="field">
+      <label>权限模式</label>
+      <div class="radio-group" id="perm-group">
+        <label class="radio-item" data-mode="ask_always">
+          <input type="radio" name="perm" value="ask_always">
+          <span><span class="t">每次都问</span><br><span class="d">所有写入 / 修补 / 跑命令都挂起等你批准。</span></span>
+        </label>
+        <label class="radio-item" data-mode="smart_auto">
+          <input type="radio" name="perm" value="smart_auto">
+          <span><span class="t">帮我批准（默认）</span><br><span class="d">白名单自动放行，只对风险操作挂起审批。</span></span>
+        </label>
+        <label class="radio-item" data-mode="full_access">
+          <input type="radio" name="perm" value="full_access">
+          <span><span class="t">完全访问</span><br><span class="d">除 bridge-config.json 外全部放行（shell 仍永禁）。</span></span>
+        </label>
+      </div>
+    </div>
+    <div class="field">
+      <label class="check"><input type="checkbox" id="cfg-hmac"> 启用 HMAC 防重放签名（X-Bridge-Signature）</label>
+    </div>
+    <div id="settings-msg"></div>
+    <div class="dialog-actions">
+      <button type="button" class="btn" id="settings-cancel">取消</button>
+      <button type="button" class="btn primary" id="settings-save">保存并热重载</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================= 源码只读弹窗 ================= -->
+<div class="overlay" id="source-overlay">
+  <div class="dialog source">
+    <h2>查看源码（只读）</h2>
+    <div class="desc" id="source-meta">—</div>
+    <pre id="source-pre"></pre>
+    <div class="dialog-actions">
+      <button type="button" class="btn" id="source-close">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================= v2.3.1 后台任务日志弹窗 ================= -->
+<div class="overlay" id="tasklog-overlay">
+  <div class="dialog log">
+    <h2 id="tasklog-title">任务输出</h2>
+    <div class="desc" id="tasklog-sub"></div>
+    <div class="log-term" id="tasklog-body"><span class="log-empty">正在拉取输出…</span></div>
+    <div class="row" style="justify-content: flex-end; margin-top: 14px;">
+      <button type="button" class="btn" id="tasklog-close">关闭</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

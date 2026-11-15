@@ -1,0 +1,13 @@
+/target
+/dist
+/gen
+.workbuddy/
+bridge-config.json
+pylon-activity.log
+pylon-activity.log.old
+.pylon_trash/
+*.WebView2/
+EBWebView/
+*.zip
+.DS_Store
+Thumbs.db

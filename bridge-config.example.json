@@ -1,0 +1,14 @@
+{
+  "host": "0.0.0.0",
+  "port": 8765,
+  "token": "YOUR_32_CHAR_RANDOM_TOKEN",
+  "roots": {
+    "work": "C:\\path\\to\\your\\workspace"
+  },
+  "run_allowlist": [["cargo", "run"], ["cargo", "test"], ["cargo", "check"], ["cargo", "build"],
+                    ["cargo", "--version"], ["rustc", "--version"]],
+  "run_asklist": [["git", "push"], ["python"]],
+  "permission_mode": "smart_auto",
+  "main_file": null,
+  "require_hmac": false
+}
